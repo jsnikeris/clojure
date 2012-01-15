@@ -166,6 +166,64 @@
 (declare pprint-simple-code-list)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Format a namespace
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- pprint-ns-seq [aseq]
+  (let [prefix (if (vector? aseq) "[" "(")
+        suffix (if (vector? aseq) "]" ")")]
+    (pprint-logical-block :prefix prefix :suffix suffix
+      (print-length-loop [aseq (seq aseq)]
+        (when aseq
+          (if (seq? (first aseq))
+            (pprint-ns-seq (first aseq))
+            (write-out (first aseq)))
+          (when (next aseq)
+            (.write ^java.io.Writer *out* " ")
+            (pprint-newline :fill)
+            (recur (next aseq))))))))
+
+(defn- pprint-ns-ref [alis]
+  (if (next alis)
+    (let [[ref-kw & stuff] alis]
+      (pprint-logical-block :prefix "(" :suffix ")"
+        ((formatter-out "~w") ref-kw)
+        (doseq [kw-sym-or-seq stuff]
+          (cond
+           (keyword? kw-sym-or-seq) ((formatter-out " ~:_~w") kw-sym-or-seq)
+           (symbol? kw-sym-or-seq) ((formatter-out " ~@:_~w") kw-sym-or-seq)
+           :else (do
+                   (pprint-newline :mandatory)
+                   (pprint-ns-seq kw-sym-or-seq))))))
+    (pprint-simple-code-list alis)))
+
+(defn- destruct-opt-args [args tests]
+  (loop [acc []
+         args (seq args)
+         tests (seq tests)]
+    (if tests
+      (if ((first tests) (first args))
+        (recur (cons (first args) acc) (next args) (next tests))
+        (recur (cons nil acc) args (next tests)))
+      (concat (reverse acc) args))))
+
+(defn- pprint-ns [alis]
+  (if (next alis)
+    (let [arg-tests [(constantly true) (constantly true) string? map?]
+          [ns-sym ns-name doc-str attr-map & references]
+          (destruct-opt-args alis arg-tests)]
+      (pprint-logical-block :prefix "(" :suffix ")"
+        ((formatter-out "~w ~1I~@_~w") ns-sym ns-name)
+        (when doc-str
+          ((formatter-out " ~_~w") doc-str))
+        (when attr-map
+          ((formatter-out " ~_~w") attr-map))
+        (doseq [reference references]
+          (pprint-newline :mandatory)
+          (pprint-ns-ref reference))))
+    (pprint-simple-code-list alis)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Format something that looks like a simple def (sans metadata, since the reader
 ;;; won't give it to us now).
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -357,6 +415,7 @@
         '. pprint-hold-first, '.. pprint-hold-first, '-> pprint-hold-first,
         'locking pprint-hold-first, 'struct pprint-hold-first,
         'struct-map pprint-hold-first, 
+        'ns pprint-ns
         })))
 
 (defn- pprint-code-list [alis]
@@ -462,6 +521,22 @@
                                   (vector? (first stuff)) (single-defn stuff (or doc-str attr-map))
                                   :else (multi-defn stuff (or doc-str attr-map)))))
         (pprint-simple-code-list writer alis)))))
+
+(with-pprint-dispatch code-dispatch
+  (pprint
+   '(ns pbox.core "a docstring" {:a 'map}
+      (:use
+       [ring.middleware.reload :only (wrap-reload)]
+       [aaaa.bbbb.ccc.ddd.eee.eee.ffff.fff :only
+        (one two three four five six seven eight nine ten eleven
+         twelve thirteen fourteen)])
+      (:import (java.net URL URI))
+      (:refer-clojure :exclude
+        [one two three four five six seven eight nine ten eleven
+         twelve thirteen fourteen])
+      (:require
+       compojure.handler
+       [net.cgrand.enlive-html :as html]))))
 )
 nil
 
